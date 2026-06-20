@@ -1,0 +1,118 @@
+/* ---- Reset ---- */
+* {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: Figtree, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+input {
+  font-family: Figtree, sans-serif;
+}
+button {
+  font-family: Figtree, sans-serif;
+}
+
+/* Oculta scrollbars en los contenedores con scroll interno */
+.scrolly::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+.scrolly {
+  scrollbar-width: none;
+}
+
+/* ---- Tokens: modo claro (por defecto) ---- */
+:root {
+  --bg: #f7f2ec;
+  --surface: #ffffff;
+  --surface2: #fbf6f0;
+  --text: #211a16;
+  --muted: #8c8077;
+  --faint: #b6aba0;
+  --line: #ede4da;
+  --accent: #e0455e;
+  --accent-ink: #ffffff;
+  --accent-soft: #fbe3e7;
+  --accent-border: #f2b4bf;
+  --pos: #1e9e6a;
+  --pos-soft: #e5f3ec;
+  --amber: #e0871e;
+  --amber-ink: #241803;
+  --amber-ink2: #7a4a0e;
+  --amber-soft: #fbebd3;
+  --chip: #f4eee7;
+  --scrim: rgba(20, 14, 10, 0.42);
+}
+
+/* ---- Tokens: modo oscuro ---- */
+:root[data-theme="dark"] {
+  --bg: #141110;
+  --surface: #211b18;
+  --surface2: #1a1513;
+  --text: #f4eee8;
+  --muted: #a89c92;
+  --faint: #6e645c;
+  --line: #2d2723;
+  --accent: #ff5e78;
+  --accent-ink: #2a0e14;
+  --accent-soft: #3a2026;
+  --accent-border: #5e2f38;
+  --pos: #39c98c;
+  --pos-soft: #16352a;
+  --amber: #f2b24c;
+  --amber-ink: #241803;
+  --amber-ink2: #f2b24c;
+  --amber-soft: #3a2e18;
+  --chip: #2a2420;
+  --scrim: rgba(0, 0, 0, 0.62);
+}
+
+/* Si no hay override explícito, sigue la preferencia del sistema */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141110;
+    --surface: #211b18;
+    --surface2: #1a1513;
+    --text: #f4eee8;
+    --muted: #a89c92;
+    --faint: #6e645c;
+    --line: #2d2723;
+    --accent: #ff5e78;
+    --accent-ink: #2a0e14;
+    --accent-soft: #3a2026;
+    --accent-border: #5e2f38;
+    --pos: #39c98c;
+    --pos-soft: #16352a;
+    --amber: #f2b24c;
+    --amber-ink: #241803;
+    --amber-ink2: #f2b24c;
+    --amber-soft: #3a2e18;
+    --chip: #2a2420;
+    --scrim: rgba(0, 0, 0, 0.62);
+  }
+}
+
+/* ---- Layout raíz de la app (móvil-first, centrada en escritorio) ---- */
+.app-shell {
+  position: relative;
+  width: 100%;
+  max-width: 460px;
+  height: 100dvh;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
