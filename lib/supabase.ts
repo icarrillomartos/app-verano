@@ -16,6 +16,9 @@ export const supabase = isSupabaseConfigured
         persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
+        // Flujo implícito: el enlace mágico trae el token en la URL y funciona
+        // aunque el email se abra en otro navegador/app (clave en móvil).
+        flowType: "implicit",
       },
     })
   : null;
