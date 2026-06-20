@@ -10,7 +10,6 @@ import {
   expiresText,
 } from "@/lib/data";
 import { loadAppData, joinPlan, leavePlan } from "@/lib/queries";
-import { CURRENT_MEMBER_ID } from "@/lib/supabase";
 import {
   Sliders,
   Check,
@@ -31,17 +30,24 @@ import {
 
 type Screen = "home" | "admin" | "onboarding";
 type Sort = "date" | "price" | "mine";
-type FaceVM = { id: string; initials: string; bg: string; ring: string };
+type FaceVM = { id: string; initials: string; bg: string; ring: string; photo: string | null };
 
 const PHOTO_OVERLAY = "linear-gradient(transparent,rgba(20,14,10,0.34))";
 
-function ringFor(id: string) {
-  return id === CURRENT_MEMBER_ID
+function ringFor(id: string, meId: string) {
+  return id === meId
     ? "0 0 0 2px var(--surface), 0 0 0 3.6px var(--accent)"
     : "0 0 0 2px var(--surface)";
 }
 
-export default function PlanApp() {
+export default function PlanApp({
+  currentMember,
+  onLogout,
+}: {
+  currentMember: Member;
+  onLogout: () => void;
+}) {
+  const meId = currentMember.id;
   // --- UI state ---
   const [screen, setScreen] = useState<Screen>("home");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -106,25 +112,21 @@ export default function PlanApp() {
   const byId: Record<string, Member> = {};
   for (const m of members) byId[m.id] = m;
 
-  const isJoined = (planId: string) =>
-    (attendance[planId] ?? []).includes(CURRENT_MEMBER_ID);
+  const isJoined = (planId: string) => (attendance[planId] ?? []).includes(meId);
 
   const attIds = (planId: string) => {
     const ids = attendance[planId] ?? [];
-    if (ids.includes(CURRENT_MEMBER_ID))
-      return [CURRENT_MEMBER_ID, ...ids.filter((i) => i !== CURRENT_MEMBER_ID)];
+    if (ids.includes(meId)) return [meId, ...ids.filter((i) => i !== meId)];
     return ids;
   };
-
-  const faceColor = (id: string) =>
-    id === CURRENT_MEMBER_ID ? "var(--accent)" : byId[id]?.color ?? "#999";
 
   const faces = (ids: string[], max: number) => ({
     shown: ids.slice(0, max).map<FaceVM>((id) => ({
       id,
       initials: byId[id]?.initials ?? "?",
-      bg: faceColor(id),
-      ring: ringFor(id),
+      bg: byId[id]?.color ?? "#999",
+      ring: ringFor(id, meId),
+      photo: byId[id]?.photo_url ?? null,
     })),
     overflow: Math.max(0, ids.length - max),
   });
@@ -138,26 +140,22 @@ export default function PlanApp() {
 
   const toggle = useCallback(
     (planId: string) => {
-      const joined = (attendance[planId] ?? []).includes(CURRENT_MEMBER_ID);
+      const joined = (attendance[planId] ?? []).includes(meId);
       setAttendance((prev) => {
         const cur = prev[planId] ?? [];
-        const next = joined
-          ? cur.filter((i) => i !== CURRENT_MEMBER_ID)
-          : [...cur, CURRENT_MEMBER_ID];
+        const next = joined ? cur.filter((i) => i !== meId) : [...cur, meId];
         return { ...prev, [planId]: next };
       });
-      (joined ? leavePlan(planId) : joinPlan(planId)).catch(() => {
+      (joined ? leavePlan(meId, planId) : joinPlan(meId, planId)).catch(() => {
         // revertir si falla
         setAttendance((prev) => {
           const cur = prev[planId] ?? [];
-          const next = joined
-            ? [...cur, CURRENT_MEMBER_ID]
-            : cur.filter((i) => i !== CURRENT_MEMBER_ID);
+          const next = joined ? [...cur, meId] : cur.filter((i) => i !== meId);
           return { ...prev, [planId]: next };
         });
       });
     },
-    [attendance]
+    [attendance, meId]
   );
 
   const open = (id: string) => {
@@ -187,7 +185,7 @@ export default function PlanApp() {
   if (sort === "mine") list = list.filter((p) => isJoined(p.id));
 
   const cluster = members
-    .filter((m) => m.id !== CURRENT_MEMBER_ID)
+    .filter((m) => m.id !== meId)
     .slice(0, 7)
     .map((m) => ({ initials: m.initials, bg: m.color }));
 
@@ -507,11 +505,18 @@ export default function PlanApp() {
                                   justifyContent: "center",
                                   font: "800 9.5px/1 Figtree",
                                   color: "#fff",
-                                  background: face.bg,
                                   boxShadow: face.ring,
+                                  ...(face.photo
+                                    ? {
+                                        backgroundColor: "#ddd",
+                                        backgroundImage: `url(${face.photo})`,
+                                        backgroundSize: "cover",
+                                        backgroundPosition: "center",
+                                      }
+                                    : { background: face.bg }),
                                 }}
                               >
-                                {face.initials}
+                                {face.photo ? "" : face.initials}
                               </div>
                             ))}
                             {f.overflow > 0 && (
@@ -627,6 +632,36 @@ export default function PlanApp() {
             <div style={{ font: "500 13px/1.5 Figtree", color: "var(--muted)" }}>
               Cuando el agente rastree Madrid y proponga planes nuevos, aparecerán aquí para que los apruebes.
             </div>
+          </div>
+          <div
+            style={{
+              flex: "none",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              padding: "12px 20px 16px",
+              borderTop: "1px solid var(--line)",
+            }}
+          >
+            <span style={{ font: "600 12.5px/1.3 Figtree", color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              Conectado como <b style={{ color: "var(--text)" }}>{currentMember.name}</b>
+            </span>
+            <button
+              onClick={onLogout}
+              style={{
+                flex: "none",
+                padding: "9px 14px",
+                borderRadius: 11,
+                border: "1px solid var(--line)",
+                background: "var(--surface)",
+                color: "var(--text)",
+                font: "700 12.5px/1 Figtree",
+                cursor: "pointer",
+              }}
+            >
+              Cerrar sesión
+            </button>
           </div>
         </>
       )}
@@ -860,14 +895,21 @@ export default function PlanApp() {
                         justifyContent: "center",
                         font: "800 13px/1 Figtree",
                         color: "#fff",
-                        background: faceColor(id),
-                        boxShadow: ringFor(id),
+                        boxShadow: ringFor(id, meId),
+                        ...(person.photo_url
+                          ? {
+                              backgroundColor: "#ddd",
+                              backgroundImage: `url(${person.photo_url})`,
+                              backgroundSize: "cover",
+                              backgroundPosition: "center",
+                            }
+                          : { background: person.color }),
                       }}
                     >
-                      {person.initials}
+                      {person.photo_url ? "" : person.initials}
                     </div>
                     <span style={{ font: "700 15px/1 Figtree", color: "var(--text)" }}>{person.name}</span>
-                    {id === CURRENT_MEMBER_ID && (
+                    {id === meId && (
                       <span
                         style={{
                           marginLeft: "auto",
@@ -1103,11 +1145,18 @@ function DetailSheet({
                   justifyContent: "center",
                   font: "800 10.5px/1 Figtree",
                   color: "#fff",
-                  background: face.bg,
                   boxShadow: face.ring,
+                  ...(face.photo
+                    ? {
+                        backgroundColor: "#ddd",
+                        backgroundImage: `url(${face.photo})`,
+                        backgroundSize: "cover",
+                        backgroundPosition: "center",
+                      }
+                    : { background: face.bg }),
                 }}
               >
-                {face.initials}
+                {face.photo ? "" : face.initials}
               </div>
             ))}
             {faces.overflow > 0 && (

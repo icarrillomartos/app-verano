@@ -1,5 +1,5 @@
-import PlanApp from "@/components/PlanApp";
+import AppRoot from "@/components/AppRoot";
 
 export default function Page() {
-  return <PlanApp />;
+  return <AppRoot />;
 }

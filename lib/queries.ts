@@ -1,4 +1,4 @@
-import { supabase, GROUP_ID, CURRENT_MEMBER_ID } from "@/lib/supabase";
+import { supabase, GROUP_ID } from "@/lib/supabase";
 import type { Member, DBPlan } from "@/lib/data";
 
 export type AppData = {
@@ -35,20 +35,20 @@ export async function loadAppData(): Promise<AppData | null> {
   };
 }
 
-export async function joinPlan(planId: string): Promise<void> {
+export async function joinPlan(memberId: string, planId: string): Promise<void> {
   if (!supabase) return;
   const { error } = await supabase
     .from("attendance")
-    .insert({ plan_id: planId, member_id: CURRENT_MEMBER_ID });
+    .insert({ plan_id: planId, member_id: memberId });
   if (error && error.code !== "23505") throw error; // 23505 = ya estaba apuntado
 }
 
-export async function leavePlan(planId: string): Promise<void> {
+export async function leavePlan(memberId: string, planId: string): Promise<void> {
   if (!supabase) return;
   const { error } = await supabase
     .from("attendance")
     .delete()
     .eq("plan_id", planId)
-    .eq("member_id", CURRENT_MEMBER_ID);
+    .eq("member_id", memberId);
   if (error) throw error;
 }

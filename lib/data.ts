@@ -5,6 +5,7 @@ export type Member = {
   name: string;
   initials: string;
   color: string;
+  photo_url?: string | null;
   is_admin?: boolean;
 };
 
