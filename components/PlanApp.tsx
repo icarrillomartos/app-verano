@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { CSSProperties } from "react";
 import {
-  PEOPLE,
-  PLANS,
-  CLUSTER_IDS,
-  INITIAL_PROPOSALS,
-  type Plan,
-  type Proposal,
+  type Member,
+  type DBPlan,
+  photoBgFor,
+  photoLabelFor,
+  expiresText,
 } from "@/lib/data";
+import { loadAppData, joinPlan, leavePlan } from "@/lib/queries";
+import { CURRENT_MEMBER_ID } from "@/lib/supabase";
 import {
   Sliders,
   Check,
@@ -25,9 +26,6 @@ import {
   Chat,
   Home,
   Tray,
-  Pencil,
-  Undo,
-  LinkChain,
   StatusIcons,
 } from "@/components/icons";
 
@@ -35,33 +33,59 @@ type Screen = "home" | "admin" | "onboarding";
 type Sort = "date" | "price" | "mine";
 type FaceVM = { id: string; initials: string; bg: string; ring: string };
 
-const PHOTO_OVERLAY =
-  "linear-gradient(transparent,rgba(20,14,10,0.34))";
+const PHOTO_OVERLAY = "linear-gradient(transparent,rgba(20,14,10,0.34))";
 
-function ring(id: string) {
-  return id === "you"
+function ringFor(id: string) {
+  return id === CURRENT_MEMBER_ID
     ? "0 0 0 2px var(--surface), 0 0 0 3.6px var(--accent)"
     : "0 0 0 2px var(--surface)";
 }
 
 export default function PlanApp() {
+  // --- UI state ---
   const [screen, setScreen] = useState<Screen>("home");
-  const [joined, setJoined] = useState<Record<string, boolean>>({ acampada: true });
   const [openId, setOpenId] = useState<string | null>(null);
   const [attendeesId, setAttendeesId] = useState<string | null>(null);
   const [sortOpen, setSortOpen] = useState(false);
   const [sort, setSort] = useState<Sort>("date");
-  const [proposals, setProposals] = useState<Proposal[]>(INITIAL_PROPOSALS);
   const [theme, setTheme] = useState<"light" | "dark" | null>(null);
 
-  // Apoyo de testing (Fase 1): permite previsualizar cualquier pantalla por URL,
-  // p. ej. ?screen=onboarding o ?screen=admin. En producción la entrada es onboarding.
+  // --- Data state ---
+  const [members, setMembers] = useState<Member[]>([]);
+  const [plans, setPlans] = useState<DBPlan[]>([]);
+  const [attendance, setAttendance] = useState<Record<string, string[]>>({});
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
   useEffect(() => {
-    const s = new URLSearchParams(window.location.search).get("screen");
-    if (s === "home" || s === "admin" || s === "onboarding") setScreen(s);
+    let alive = true;
+    (async () => {
+      try {
+        const data = await loadAppData();
+        if (!alive) return;
+        if (data) {
+          setMembers(data.members);
+          setPlans(data.plans);
+          setAttendance(data.attendance);
+        }
+      } catch (e) {
+        if (alive) setLoadError(e instanceof Error ? e.message : "Error cargando datos");
+      } finally {
+        if (alive) setLoading(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
   }, []);
 
-  // Toggle de tema (oculto: tocar la hora "9:41"). Por defecto sigue al sistema.
+  // Apoyo de testing: ?screen=home|admin|onboarding
+  useEffect(() => {
+    const s = new URLSearchParams(window.location.search).get("screen");
+    if (s === "home" || s === "admin" || s === "onboarding") setScreen(s as Screen);
+  }, []);
+
+  // Tema (tocar la hora "9:41"); por defecto sigue al sistema
   useEffect(() => {
     const el = document.documentElement;
     if (theme) el.setAttribute("data-theme", theme);
@@ -78,36 +102,68 @@ export default function PlanApp() {
       return cur === "dark" ? "light" : "dark";
     });
 
-  // ---- Helpers de estado ----
-  const isJoined = (id: string) => !!joined[id];
-  const attIds = (p: Plan) => {
-    const ids = [...p.others];
-    if (isJoined(p.id)) ids.unshift("you");
+  // --- Derivados ---
+  const byId: Record<string, Member> = {};
+  for (const m of members) byId[m.id] = m;
+
+  const isJoined = (planId: string) =>
+    (attendance[planId] ?? []).includes(CURRENT_MEMBER_ID);
+
+  const attIds = (planId: string) => {
+    const ids = attendance[planId] ?? [];
+    if (ids.includes(CURRENT_MEMBER_ID))
+      return [CURRENT_MEMBER_ID, ...ids.filter((i) => i !== CURRENT_MEMBER_ID)];
     return ids;
   };
+
+  const faceColor = (id: string) =>
+    id === CURRENT_MEMBER_ID ? "var(--accent)" : byId[id]?.color ?? "#999";
+
   const faces = (ids: string[], max: number) => ({
     shown: ids.slice(0, max).map<FaceVM>((id) => ({
       id,
-      initials: PEOPLE[id].initials,
-      bg: PEOPLE[id].color,
-      ring: ring(id),
+      initials: byId[id]?.initials ?? "?",
+      bg: faceColor(id),
+      ring: ringFor(id),
     })),
     overflow: Math.max(0, ids.length - max),
   });
+
   const namesLine = (ids: string[]) => {
-    if (ids.length === 0) return "Nadie todavía";
-    const names = ids.map((id) => PEOPLE[id].name.split(" ")[0]);
+    if (!ids.length) return "Nadie todavía";
+    const names = ids.map((id) => (byId[id]?.name ?? "?").split(" ")[0]);
     if (ids.length <= 3) return names.join(", ");
     return names.slice(0, 2).join(", ") + " +" + (ids.length - 2);
   };
 
-  // ---- Acciones ----
-  const toggleJoin = (id: string) => setJoined((j) => ({ ...j, [id]: !j[id] }));
+  const toggle = useCallback(
+    (planId: string) => {
+      const joined = (attendance[planId] ?? []).includes(CURRENT_MEMBER_ID);
+      setAttendance((prev) => {
+        const cur = prev[planId] ?? [];
+        const next = joined
+          ? cur.filter((i) => i !== CURRENT_MEMBER_ID)
+          : [...cur, CURRENT_MEMBER_ID];
+        return { ...prev, [planId]: next };
+      });
+      (joined ? leavePlan(planId) : joinPlan(planId)).catch(() => {
+        // revertir si falla
+        setAttendance((prev) => {
+          const cur = prev[planId] ?? [];
+          const next = joined
+            ? [...cur, CURRENT_MEMBER_ID]
+            : cur.filter((i) => i !== CURRENT_MEMBER_ID);
+          return { ...prev, [planId]: next };
+        });
+      });
+    },
+    [attendance]
+  );
+
   const open = (id: string) => {
     setOpenId(id);
     setSortOpen(false);
   };
-  const close = () => setOpenId(null);
   const goScreen = (s: Screen) => {
     setScreen(s);
     setOpenId(null);
@@ -118,25 +174,27 @@ export default function PlanApp() {
     setSort(v);
     setSortOpen(false);
   };
-  const pUpdate = (id: string, patch: Partial<Proposal>) =>
-    setProposals((ps) => ps.map((p) => (p.id === id ? { ...p, ...patch } : p)));
 
-  // ---- Derivados ----
-  let list = [...PLANS];
+  // Orden del feed
+  const dateKey = (p: DBPlan) => {
+    if (p.is_flash) return "0-" + (p.expires_at ?? p.date_start ?? "9999");
+    if (p.date_start) return "1-" + p.date_start;
+    return "2-zzz";
+  };
+  let list = [...plans];
   if (sort === "price") list.sort((a, b) => a.price - b.price);
+  else list.sort((a, b) => dateKey(a).localeCompare(dateKey(b)));
   if (sort === "mine") list = list.filter((p) => isJoined(p.id));
 
-  const pendingCount = proposals.filter((p) => p.status === "pending").length;
-  const cluster = CLUSTER_IDS.map((id) => ({
-    initials: PEOPLE[id].initials,
-    bg: PEOPLE[id].color,
-  }));
+  const cluster = members
+    .filter((m) => m.id !== CURRENT_MEMBER_ID)
+    .slice(0, 7)
+    .map((m) => ({ initials: m.initials, bg: m.color }));
 
-  const detailPlan = openId ? PLANS.find((p) => p.id === openId) ?? null : null;
-  const attPlan = attendeesId ? PLANS.find((p) => p.id === attendeesId) ?? null : null;
+  const detailPlan = openId ? plans.find((p) => p.id === openId) ?? null : null;
+  const attPlan = attendeesId ? plans.find((p) => p.id === attendeesId) ?? null : null;
   const showNav = screen === "home" || screen === "admin";
 
-  // ---- Estilos reutilizables ----
   const chip: CSSProperties = {
     display: "flex",
     alignItems: "center",
@@ -187,7 +245,7 @@ export default function PlanApp() {
                 La cuadrilla
               </div>
               <div style={{ marginTop: 5, font: "600 12.5px/1 Figtree", color: "var(--muted)" }}>
-                12 personas · 10 planes vivos
+                {members.length} personas · {plans.length} planes vivos
               </div>
             </div>
             <button
@@ -264,250 +322,279 @@ export default function PlanApp() {
               gap: 16,
             }}
           >
-            {list.map((p) => {
-              const j = isJoined(p.id);
-              const ids = attIds(p);
-              const f = faces(ids, 4);
-              const free = p.price === 0;
-              const empty = ids.length === 0;
-              const border = j
-                ? "1.5px solid var(--accent)"
-                : p.flash
-                ? "1.5px solid var(--amber)"
-                : "1px solid var(--line)";
-              return (
-                <div
-                  key={p.id}
-                  onClick={() => open(p.id)}
-                  style={{
-                    cursor: "pointer",
-                    flex: "none",
-                    background: "var(--surface)",
-                    borderRadius: 24,
-                    overflow: "hidden",
-                    border,
-                  }}
-                >
-                  {/* Foto */}
-                  <div style={{ position: "relative", width: "100%", height: 184, background: p.photoBg }}>
+            {loading && (
+              <div style={{ padding: "60px 0", textAlign: "center", font: "600 13px/1.5 Figtree", color: "var(--muted)" }}>
+                Cargando planes…
+              </div>
+            )}
+            {loadError && (
+              <div style={{ padding: "40px 0", textAlign: "center", font: "600 13px/1.5 Figtree", color: "var(--accent)" }}>
+                No se pudieron cargar los planes.<br />
+                <span style={{ color: "var(--muted)", fontWeight: 500 }}>{loadError}</span>
+              </div>
+            )}
+
+            {!loading &&
+              list.map((p) => {
+                const j = isJoined(p.id);
+                const ids = attIds(p.id);
+                const f = faces(ids, 4);
+                const free = p.price === 0;
+                const empty = ids.length === 0;
+                const border = j
+                  ? "1.5px solid var(--accent)"
+                  : p.is_flash
+                  ? "1.5px solid var(--amber)"
+                  : "1px solid var(--line)";
+                const expText = p.is_flash ? expiresText(p.expires_at) : "";
+                const photoStyle: CSSProperties = p.image_url
+                  ? {
+                      backgroundColor: "#ddd",
+                      backgroundImage: `url(${p.image_url})`,
+                      backgroundSize: "cover",
+                      backgroundPosition: "center",
+                    }
+                  : { background: photoBgFor(p.category) };
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => open(p.id)}
+                    style={{
+                      cursor: "pointer",
+                      flex: "none",
+                      background: "var(--surface)",
+                      borderRadius: 24,
+                      overflow: "hidden",
+                      border,
+                    }}
+                  >
+                    {/* Foto */}
                     <div
                       style={{
-                        position: "absolute",
-                        top: 12,
-                        left: 12,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                        padding: "6px 11px",
-                        borderRadius: 999,
-                        background: "rgba(20,14,10,0.5)",
-                        backdropFilter: "blur(6px)",
-                        WebkitBackdropFilter: "blur(6px)",
+                        position: "relative",
+                        width: "100%",
+                        height: 184,
+                        ...photoStyle,
                       }}
                     >
-                      {p.flash && <Bolt size={12} />}
-                      <span style={{ font: "700 11px/1 Figtree", color: "#fff", letterSpacing: "0.03em" }}>
-                        {p.category}
-                      </span>
-                    </div>
-                    {p.flash && (
                       <div
                         style={{
                           position: "absolute",
                           top: 12,
-                          right: 12,
+                          left: 12,
                           display: "flex",
                           alignItems: "center",
                           gap: 5,
                           padding: "6px 11px",
                           borderRadius: 999,
-                          background: "var(--amber)",
-                          color: "var(--amber-ink)",
+                          background: "rgba(20,14,10,0.5)",
+                          backdropFilter: "blur(6px)",
+                          WebkitBackdropFilter: "blur(6px)",
                         }}
                       >
-                        <Clock size={12} />
-                        <span style={{ font: "800 11px/1 Figtree" }}>{p.expires}</span>
+                        {p.is_flash && <Bolt size={12} />}
+                        <span style={{ font: "700 11px/1 Figtree", color: "#fff", letterSpacing: "0.03em" }}>
+                          {p.category}
+                        </span>
                       </div>
-                    )}
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 6,
-                        padding: 10,
-                        font: "400 9.5px/1 'Space Mono',monospace",
-                        letterSpacing: "0.04em",
-                        color: "rgba(255,255,255,0.92)",
-                        background: PHOTO_OVERLAY,
-                      }}
-                    >
-                      {p.photoLabel}
-                    </div>
-                  </div>
-
-                  {/* Body */}
-                  <div style={{ padding: "14px 15px 13px" }}>
-                    <div
-                      style={{
-                        font: "700 18px/1.24 Figtree",
-                        color: "var(--text)",
-                        marginBottom: 11,
-                        textWrap: "pretty",
-                      }}
-                    >
-                      {p.title}
-                    </div>
-                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
-                      <div style={chip}>
-                        <Calendar size={13} />
-                        {p.date}
-                      </div>
-                      {free ? (
+                      {p.is_flash && expText && (
                         <div
                           style={{
-                            ...chip,
-                            background: "var(--pos-soft)",
-                            color: "var(--pos)",
-                            font: "700 12px/1 Figtree",
+                            position: "absolute",
+                            top: 12,
+                            right: 12,
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 5,
+                            padding: "6px 11px",
+                            borderRadius: 999,
+                            background: "var(--amber)",
+                            color: "var(--amber-ink)",
                           }}
                         >
-                          <CheckGratis size={13} />
-                          Gratis
-                        </div>
-                      ) : (
-                        <div style={chip}>
-                          <Coin size={13} />
-                          {p.price}€
+                          <Clock size={12} />
+                          <span style={{ font: "800 11px/1 Figtree" }}>{expText}</span>
                         </div>
                       )}
-                      <div style={chip}>
-                        <Pin size={13} />
-                        {p.location}
-                      </div>
+                      {!p.image_url && (
+                        <div
+                          style={{
+                            position: "absolute",
+                            left: 0,
+                            right: 0,
+                            bottom: 0,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 6,
+                            padding: 10,
+                            font: "400 9.5px/1 'Space Mono',monospace",
+                            letterSpacing: "0.04em",
+                            color: "rgba(255,255,255,0.92)",
+                            background: PHOTO_OVERLAY,
+                          }}
+                        >
+                          {photoLabelFor(p)}
+                        </div>
+                      )}
                     </div>
 
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
-                      {empty ? (
-                        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                          <div
-                            style={{
-                              width: 30,
-                              height: 30,
-                              borderRadius: "50%",
-                              border: "1.6px dashed var(--accent-border)",
-                              display: "flex",
-                              alignItems: "center",
-                              justifyContent: "center",
-                              color: "var(--accent)",
-                            }}
-                          >
-                            <Plus size={15} />
-                          </div>
-                          <span style={{ font: "600 12.5px/1.3 Figtree", color: "var(--muted)" }}>
-                            Recién publicado
-                            <br />
-                            <span style={{ color: "var(--accent)", fontWeight: 700 }}>
-                              Sé el primero en apuntarte
-                            </span>
-                          </span>
+                    {/* Body */}
+                    <div style={{ padding: "14px 15px 13px" }}>
+                      <div
+                        style={{
+                          font: "700 18px/1.24 Figtree",
+                          color: "var(--text)",
+                          marginBottom: 11,
+                          textWrap: "pretty",
+                        }}
+                      >
+                        {p.title}
+                      </div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
+                        <div style={chip}>
+                          <Calendar size={13} />
+                          {p.date_text ?? p.date_long ?? ""}
                         </div>
-                      ) : (
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setAttendeesId(p.id);
-                          }}
-                          style={{ display: "flex", alignItems: "center", paddingLeft: 8, cursor: "pointer" }}
-                        >
-                          {f.shown.map((face) => (
+                        {free ? (
+                          <div style={{ ...chip, background: "var(--pos-soft)", color: "var(--pos)", font: "700 12px/1 Figtree" }}>
+                            <CheckGratis size={13} />
+                            Gratis
+                          </div>
+                        ) : (
+                          <div style={chip}>
+                            <Coin size={13} />
+                            {p.price}€
+                          </div>
+                        )}
+                        {p.location && (
+                          <div style={chip}>
+                            <Pin size={13} />
+                            {p.location}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10 }}>
+                        {empty ? (
+                          <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
                             <div
-                              key={face.id}
                               style={{
                                 width: 30,
                                 height: 30,
                                 borderRadius: "50%",
-                                marginLeft: -8,
+                                border: "1.6px dashed var(--accent-border)",
                                 display: "flex",
                                 alignItems: "center",
                                 justifyContent: "center",
-                                font: "800 9.5px/1 Figtree",
-                                color: "#fff",
-                                background: face.bg,
-                                boxShadow: face.ring,
+                                color: "var(--accent)",
                               }}
                             >
-                              {face.initials}
+                              <Plus size={15} />
                             </div>
-                          ))}
-                          {f.overflow > 0 && (
-                            <div
-                              style={{
-                                height: 30,
-                                padding: "0 9px 0 11px",
-                                marginLeft: -8,
-                                borderRadius: 999,
-                                display: "flex",
-                                alignItems: "center",
-                                font: "700 11px/1 Figtree",
-                                color: "var(--muted)",
-                                background: "var(--chip)",
-                                boxShadow: "0 0 0 2px var(--surface)",
-                              }}
-                            >
-                              +{f.overflow}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleJoin(p.id);
-                        }}
-                        style={{
-                          flex: "none",
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "10px 15px",
-                          borderRadius: 999,
-                          border: j ? "1px solid var(--accent-border)" : "1px solid transparent",
-                          background: j ? "var(--accent-soft)" : "var(--accent)",
-                          color: j ? "var(--accent)" : "var(--accent-ink)",
-                          font: "700 13px/1 Figtree",
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {j ? <Check size={15} sw={2.4} /> : <Plus size={15} sw={2.4} />}
-                        {j ? "Apuntado" : "Me apunto"}
-                      </button>
+                            <span style={{ font: "600 12.5px/1.3 Figtree", color: "var(--muted)" }}>
+                              Recién publicado
+                              <br />
+                              <span style={{ color: "var(--accent)", fontWeight: 700 }}>
+                                Sé el primero en apuntarte
+                              </span>
+                            </span>
+                          </div>
+                        ) : (
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAttendeesId(p.id);
+                            }}
+                            style={{ display: "flex", alignItems: "center", paddingLeft: 8, cursor: "pointer" }}
+                          >
+                            {f.shown.map((face) => (
+                              <div
+                                key={face.id}
+                                style={{
+                                  width: 30,
+                                  height: 30,
+                                  borderRadius: "50%",
+                                  marginLeft: -8,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  justifyContent: "center",
+                                  font: "800 9.5px/1 Figtree",
+                                  color: "#fff",
+                                  background: face.bg,
+                                  boxShadow: face.ring,
+                                }}
+                              >
+                                {face.initials}
+                              </div>
+                            ))}
+                            {f.overflow > 0 && (
+                              <div
+                                style={{
+                                  height: 30,
+                                  padding: "0 9px 0 11px",
+                                  marginLeft: -8,
+                                  borderRadius: 999,
+                                  display: "flex",
+                                  alignItems: "center",
+                                  font: "700 11px/1 Figtree",
+                                  color: "var(--muted)",
+                                  background: "var(--chip)",
+                                  boxShadow: "0 0 0 2px var(--surface)",
+                                }}
+                              >
+                                +{f.overflow}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            toggle(p.id);
+                          }}
+                          style={{
+                            flex: "none",
+                            display: "flex",
+                            alignItems: "center",
+                            gap: 6,
+                            padding: "10px 15px",
+                            borderRadius: 999,
+                            border: j ? "1px solid var(--accent-border)" : "1px solid transparent",
+                            background: j ? "var(--accent-soft)" : "var(--accent)",
+                            color: j ? "var(--accent)" : "var(--accent-ink)",
+                            font: "700 13px/1 Figtree",
+                            cursor: "pointer",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {j ? <Check size={15} sw={2.4} /> : <Plus size={15} sw={2.4} />}
+                          {j ? "Apuntado" : "Me apunto"}
+                        </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-            <div
-              style={{
-                flex: "none",
-                textAlign: "center",
-                padding: "8px 0 4px",
-                font: "500 11.5px/1.5 Figtree",
-                color: "var(--faint)",
-              }}
-            >
-              El agente busca planes nuevos cada domingo
-            </div>
+                );
+              })}
+
+            {!loading && !loadError && (
+              <div
+                style={{
+                  flex: "none",
+                  textAlign: "center",
+                  padding: "8px 0 4px",
+                  font: "500 11.5px/1.5 Figtree",
+                  color: "var(--faint)",
+                }}
+              >
+                El agente busca planes nuevos cada domingo
+              </div>
+            )}
           </div>
         </>
       )}
 
-      {/* ============ ADMIN ============ */}
+      {/* ============ ADMIN (vacío en Fase 2) ============ */}
       {screen === "admin" && (
         <>
           <div
@@ -524,290 +611,33 @@ export default function PlanApp() {
                 Propuestas de esta semana
               </div>
               <div style={{ marginTop: 5, font: "600 12px/1.3 Figtree", color: "var(--muted)" }}>
-                El agente rastreó Madrid · domingo 6 jul
+                El agente aún no ha propuesto planes nuevos
               </div>
             </div>
+          </div>
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 36px 60px", textAlign: "center" }}>
             <div
               style={{
-                flex: "none",
+                width: 54,
+                height: 54,
+                borderRadius: 18,
+                border: "1px solid var(--line)",
+                background: "var(--surface)",
                 display: "flex",
                 alignItems: "center",
-                gap: 6,
-                padding: "7px 12px",
-                borderRadius: 999,
-                background: "var(--amber-soft)",
-                color: "var(--amber-ink2)",
+                justifyContent: "center",
+                color: "var(--faint)",
+                marginBottom: 16,
               }}
             >
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--amber)" }} />
-              <span style={{ font: "800 12px/1 Figtree" }}>{pendingCount} pendientes</span>
+              <Tray size={26} />
             </div>
-          </div>
-
-          <div
-            className="scrolly"
-            style={{
-              flex: 1,
-              overflowY: "auto",
-              padding: "2px 16px 20px",
-              display: "flex",
-              flexDirection: "column",
-              gap: 16,
-            }}
-          >
-            {proposals.map((p) => {
-              const free = p.price === 0;
-              const resolved = p.status === "approved" || p.status === "discarded";
-              return (
-                <div
-                  key={p.id}
-                  style={{
-                    flex: "none",
-                    background: "var(--surface)",
-                    borderRadius: 22,
-                    overflow: "hidden",
-                    border: "1px solid var(--line)",
-                    opacity: resolved ? 0.62 : 1,
-                  }}
-                >
-                  <div style={{ position: "relative", width: "100%", height: 130, background: p.photoBg }}>
-                    <div
-                      style={{
-                        position: "absolute",
-                        top: 11,
-                        left: 11,
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                        padding: "5px 10px",
-                        borderRadius: 999,
-                        background: "rgba(20,14,10,0.5)",
-                        backdropFilter: "blur(6px)",
-                        WebkitBackdropFilter: "blur(6px)",
-                      }}
-                    >
-                      <span style={{ font: "700 10.5px/1 Figtree", color: "#fff", letterSpacing: "0.03em" }}>
-                        {p.category}
-                      </span>
-                    </div>
-                    {p.status === "pending" && (
-                      <Badge bg="var(--amber)" color="var(--amber-ink)" label="Pendiente" />
-                    )}
-                    {p.status === "approved" && (
-                      <Badge bg="var(--pos)" color="#fff" label="Publicado" check />
-                    )}
-                    {p.status === "discarded" && (
-                      <Badge bg="rgba(20,14,10,0.55)" color="#fff" label="Descartado" />
-                    )}
-                    <div
-                      style={{
-                        position: "absolute",
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        padding: "8px 10px",
-                        font: "400 9px/1 'Space Mono',monospace",
-                        letterSpacing: "0.04em",
-                        color: "rgba(255,255,255,0.9)",
-                        background: "linear-gradient(transparent,rgba(20,14,10,0.3))",
-                      }}
-                    >
-                      {p.photoLabel}
-                    </div>
-                  </div>
-
-                  <div style={{ padding: "13px 15px 14px" }}>
-                    {p.editing ? (
-                      <div style={{ display: "flex", flexDirection: "column", gap: 9 }}>
-                        <div
-                          style={{
-                            font: "700 11px/1 Figtree",
-                            color: "var(--muted)",
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
-                          }}
-                        >
-                          Editar antes de publicar
-                        </div>
-                        <input
-                          value={p.title}
-                          onChange={(e) => pUpdate(p.id, { title: e.target.value })}
-                          style={editInput}
-                        />
-                        <div style={{ display: "flex", gap: 9 }}>
-                          <input
-                            value={p.date}
-                            onChange={(e) => pUpdate(p.id, { date: e.target.value })}
-                            style={{ ...editInput, flex: 1, minWidth: 0, font: "600 13px/1 Figtree" }}
-                          />
-                          <input
-                            value={p.price}
-                            onChange={(e) => pUpdate(p.id, { price: parseInt(e.target.value || "0", 10) || 0 })}
-                            inputMode="numeric"
-                            style={{ ...editInput, width: 78, font: "600 13px/1 Figtree" }}
-                          />
-                        </div>
-                        <div style={{ display: "flex", gap: 9, marginTop: 2 }}>
-                          <button onClick={() => pUpdate(p.id, { editing: false })} style={editCancelBtn}>
-                            Cancelar
-                          </button>
-                          <button onClick={() => pUpdate(p.id, { editing: false })} style={editSaveBtn}>
-                            Guardar
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <>
-                        <div
-                          style={{
-                            font: "700 16.5px/1.25 Figtree",
-                            color: "var(--text)",
-                            marginBottom: 10,
-                            textWrap: "pretty",
-                          }}
-                        >
-                          {p.title}
-                        </div>
-                        <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 11 }}>
-                          <div style={smallChip}>
-                            <Calendar size={12} />
-                            {p.date}
-                          </div>
-                          {free ? (
-                            <div style={{ ...smallChip, background: "var(--pos-soft)", color: "var(--pos)", font: "700 11.5px/1 Figtree" }}>
-                              Gratis
-                            </div>
-                          ) : (
-                            <div style={smallChip}>{p.price}€</div>
-                          )}
-                          <div style={smallChip}>
-                            <Pin size={12} />
-                            {p.location}
-                          </div>
-                        </div>
-                        <div
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            gap: 7,
-                            padding: "9px 11px",
-                            borderRadius: 12,
-                            background: "var(--surface2)",
-                            border: "1px solid var(--line)",
-                            marginBottom: 13,
-                          }}
-                        >
-                          <LinkChain size={14} color="var(--muted)" />
-                          <span
-                            style={{
-                              flex: 1,
-                              minWidth: 0,
-                              font: "600 12px/1.3 Figtree",
-                              color: "var(--muted)",
-                              overflow: "hidden",
-                              textOverflow: "ellipsis",
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            Fuente: {p.source}
-                          </span>
-                          <span style={{ font: "700 11.5px/1 Figtree", color: "var(--accent)" }}>Verificar</span>
-                        </div>
-
-                        {p.status === "pending" ? (
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <button
-                              onClick={() => pUpdate(p.id, { status: "discarded", editing: false })}
-                              style={{
-                                flex: "none",
-                                width: 42,
-                                height: 42,
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                borderRadius: 13,
-                                border: "1px solid var(--line)",
-                                background: "var(--surface)",
-                                color: "var(--muted)",
-                                cursor: "pointer",
-                              }}
-                            >
-                              <X size={17} />
-                            </button>
-                            <button
-                              onClick={() => pUpdate(p.id, { editing: true })}
-                              style={{
-                                flex: 1,
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                gap: 6,
-                                height: 42,
-                                borderRadius: 13,
-                                border: "1px solid var(--line)",
-                                background: "var(--surface)",
-                                color: "var(--text)",
-                                font: "700 13px/1 Figtree",
-                                cursor: "pointer",
-                              }}
-                            >
-                              <Pencil size={15} />
-                              Editar
-                            </button>
-                            <button
-                              onClick={() => pUpdate(p.id, { status: "approved", editing: false })}
-                              style={{
-                                flex: 1,
-                                display: "flex",
-                                alignItems: "center",
-                                justifyContent: "center",
-                                gap: 6,
-                                height: 42,
-                                borderRadius: 13,
-                                border: "none",
-                                background: "var(--accent)",
-                                color: "var(--accent-ink)",
-                                font: "800 13px/1 Figtree",
-                                cursor: "pointer",
-                              }}
-                            >
-                              <Check size={15} sw={2.6} />
-                              Aprobar
-                            </button>
-                          </div>
-                        ) : (
-                          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                            <span style={{ font: "700 12.5px/1 Figtree", color: "var(--muted)" }}>
-                              {p.status === "approved"
-                                ? "Publicado en la Home del grupo"
-                                : "Fuera de la cola de esta semana"}
-                            </span>
-                            <button
-                              onClick={() => pUpdate(p.id, { status: "pending", editing: false })}
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 5,
-                                padding: "9px 14px",
-                                borderRadius: 11,
-                                border: "1px solid var(--line)",
-                                background: "var(--surface)",
-                                color: "var(--text)",
-                                font: "700 12.5px/1 Figtree",
-                                cursor: "pointer",
-                              }}
-                            >
-                              <Undo size={14} />
-                              Deshacer
-                            </button>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+            <div style={{ font: "800 16px/1.3 Figtree", color: "var(--text)", marginBottom: 7 }}>
+              Todo revisado
+            </div>
+            <div style={{ font: "500 13px/1.5 Figtree", color: "var(--muted)" }}>
+              Cuando el agente rastree Madrid y proponga planes nuevos, aparecerán aquí para que los apruebes.
+            </div>
           </div>
         </>
       )}
@@ -862,7 +692,7 @@ export default function PlanApp() {
             La cuadrilla
           </div>
           <div style={{ marginTop: 9, font: "600 14px/1 Figtree", color: "var(--muted)" }}>
-            12 personas · Madrid
+            {members.length || 12} personas · Madrid
           </div>
           <div style={{ width: 54, height: 1, background: "var(--line)", margin: "26px 0" }} />
           <div
@@ -937,42 +767,23 @@ export default function PlanApp() {
             <Home size={22} />
             <span style={{ font: "700 10.5px/1 Figtree" }}>Planes</span>
           </button>
-          <button onClick={() => goScreen("admin")} style={{ ...navBtn(screen === "admin"), position: "relative" }}>
+          <button onClick={() => goScreen("admin")} style={navBtn(screen === "admin")}>
             <Tray size={22} />
             <span style={{ font: "700 10.5px/1 Figtree" }}>Revisar</span>
-            {pendingCount > 0 && (
-              <span
-                style={{
-                  position: "absolute",
-                  top: 3,
-                  right: "calc(50% - 22px)",
-                  minWidth: 17,
-                  height: 17,
-                  padding: "0 4px",
-                  borderRadius: 999,
-                  background: "var(--accent)",
-                  color: "var(--accent-ink)",
-                  font: "800 10px/17px Figtree",
-                  textAlign: "center",
-                }}
-              >
-                {pendingCount}
-              </span>
-            )}
           </button>
         </div>
       )}
 
-      {/* ============ DETALLE (bottom-sheet) ============ */}
+      {/* ============ DETALLE ============ */}
       {detailPlan && (
         <DetailSheet
           plan={detailPlan}
           joined={isJoined(detailPlan.id)}
-          faces={faces(attIds(detailPlan), 7)}
-          count={attIds(detailPlan).length}
-          namesLine={namesLine(attIds(detailPlan))}
-          onClose={close}
-          onToggle={() => toggleJoin(detailPlan.id)}
+          faces={faces(attIds(detailPlan.id), 7)}
+          count={attIds(detailPlan.id).length}
+          namesLine={namesLine(attIds(detailPlan.id))}
+          onClose={() => setOpenId(null)}
+          onToggle={() => toggle(detailPlan.id)}
         />
       )}
 
@@ -1013,7 +824,7 @@ export default function PlanApp() {
               <div>
                 <div style={{ font: "800 18px/1 Figtree", color: "var(--text)" }}>Quién se apunta</div>
                 <div style={{ marginTop: 5, font: "600 12px/1 Figtree", color: "var(--muted)" }}>
-                  {attIds(attPlan).length} personas
+                  {attIds(attPlan.id).length} personas
                 </div>
               </div>
               <button
@@ -1045,8 +856,9 @@ export default function PlanApp() {
                 gap: 3,
               }}
             >
-              {attIds(attPlan).map((id) => {
-                const person = PEOPLE[id];
+              {attIds(attPlan.id).map((id) => {
+                const person = byId[id];
+                if (!person) return null;
                 return (
                   <div key={id} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 0" }}>
                     <div
@@ -1059,14 +871,14 @@ export default function PlanApp() {
                         justifyContent: "center",
                         font: "800 13px/1 Figtree",
                         color: "#fff",
-                        background: person.color,
-                        boxShadow: ring(id),
+                        background: faceColor(id),
+                        boxShadow: ringFor(id),
                       }}
                     >
                       {person.initials}
                     </div>
                     <span style={{ font: "700 15px/1 Figtree", color: "var(--text)" }}>{person.name}</span>
-                    {id === "you" && (
+                    {id === CURRENT_MEMBER_ID && (
                       <span
                         style={{
                           marginLeft: "auto",
@@ -1091,30 +903,7 @@ export default function PlanApp() {
   );
 }
 
-// ---- Sub-componentes / estilos ----
-
-function Badge({ bg, color, label, check }: { bg: string; color: string; label: string; check?: boolean }) {
-  return (
-    <div
-      style={{
-        position: "absolute",
-        top: 11,
-        right: 11,
-        display: "flex",
-        alignItems: "center",
-        gap: 5,
-        padding: "5px 10px",
-        borderRadius: 999,
-        background: bg,
-        color,
-      }}
-    >
-      {check && <Check size={12} sw={2.6} />}
-      <span style={{ font: "800 10.5px/1 Figtree" }}>{label}</span>
-    </div>
-  );
-}
-
+// ---- Detalle (bottom-sheet) ----
 function DetailSheet({
   plan,
   joined,
@@ -1124,7 +913,7 @@ function DetailSheet({
   onClose,
   onToggle,
 }: {
-  plan: Plan;
+  plan: DBPlan;
   joined: boolean;
   faces: { shown: FaceVM[]; overflow: number };
   count: number;
@@ -1157,6 +946,7 @@ function DetailSheet({
     font: "700 13.5px/1 Figtree",
     cursor: "pointer",
   };
+  const priceChipText = free ? "Gratis" : `${plan.price}€${plan.price_note ? " · " + plan.price_note : " / persona"}`;
   return (
     <div
       onClick={onClose}
@@ -1181,7 +971,21 @@ function DetailSheet({
           overflow: "hidden",
         }}
       >
-        <div style={{ position: "relative", height: 224, flex: "none", background: plan.photoBg }}>
+        <div
+          style={{
+            position: "relative",
+            height: 224,
+            flex: "none",
+            ...(plan.image_url
+              ? {
+                  backgroundColor: "#ddd",
+                  backgroundImage: `url(${plan.image_url})`,
+                  backgroundSize: "cover",
+                  backgroundPosition: "center",
+                }
+              : { background: photoBgFor(plan.category) }),
+          }}
+        >
           <button
             onClick={onClose}
             style={{
@@ -1219,26 +1023,28 @@ function DetailSheet({
               WebkitBackdropFilter: "blur(6px)",
             }}
           >
-            {plan.flash && <Bolt size={12} />}
+            {plan.is_flash && <Bolt size={12} />}
             <span style={{ font: "700 11.5px/1 Figtree", color: "#fff", letterSpacing: "0.03em" }}>
               {plan.category}
             </span>
           </div>
-          <div
-            style={{
-              position: "absolute",
-              left: 0,
-              right: 0,
-              bottom: 0,
-              padding: 10,
-              textAlign: "center",
-              font: "400 9.5px/1 'Space Mono',monospace",
-              color: "rgba(255,255,255,0.9)",
-              background: PHOTO_OVERLAY,
-            }}
-          >
-            {plan.photoLabel}
-          </div>
+          {!plan.image_url && (
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                right: 0,
+                bottom: 0,
+                padding: 10,
+                textAlign: "center",
+                font: "400 9.5px/1 'Space Mono',monospace",
+                color: "rgba(255,255,255,0.9)",
+                background: PHOTO_OVERLAY,
+              }}
+            >
+              {photoLabelFor(plan)}
+            </div>
+          )}
         </div>
 
         <div className="scrolly" style={{ flex: 1, overflowY: "auto", padding: "18px 20px 4px" }}>
@@ -1256,34 +1062,40 @@ function DetailSheet({
           <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 17 }}>
             <div style={detailChip}>
               <Calendar size={14} color="var(--muted)" />
-              {plan.dateLong || plan.date}
+              {plan.date_long ?? plan.date_text ?? ""}
             </div>
             {free ? (
               <div style={{ ...detailChip, background: "var(--pos-soft)", color: "var(--pos)", font: "700 12.5px/1 Figtree" }}>
                 Gratis
               </div>
             ) : (
-              <div style={detailChip}>{plan.price}€ / persona</div>
+              <div style={detailChip}>{priceChipText}</div>
             )}
-            <div style={detailChip}>
-              <Pin size={14} color="var(--muted)" />
-              {plan.location}
-            </div>
-            <div style={detailChip}>
-              <Clock size={14} color="var(--muted)" />
-              {plan.duration || "—"}
-            </div>
+            {plan.location && (
+              <div style={detailChip}>
+                <Pin size={14} color="var(--muted)" />
+                {plan.location}
+              </div>
+            )}
+            {plan.duration && (
+              <div style={detailChip}>
+                <Clock size={14} color="var(--muted)" />
+                {plan.duration}
+              </div>
+            )}
           </div>
-          <div
-            style={{
-              font: "500 14.5px/1.55 Figtree",
-              color: "var(--muted)",
-              marginBottom: 20,
-              textWrap: "pretty",
-            }}
-          >
-            {plan.desc}
-          </div>
+          {plan.description && (
+            <div
+              style={{
+                font: "500 14.5px/1.55 Figtree",
+                color: "var(--muted)",
+                marginBottom: 20,
+                textWrap: "pretty",
+              }}
+            >
+              {plan.description}
+            </div>
+          )}
           <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 11 }}>
             <span style={{ font: "700 13px/1 Figtree", color: "var(--text)" }}>Apuntados · {count}</span>
             <span style={{ font: "600 12px/1 Figtree", color: "var(--muted)" }}>{namesLine}</span>
@@ -1329,7 +1141,10 @@ function DetailSheet({
             )}
           </div>
           <div style={{ display: "flex", gap: 10, marginBottom: 6 }}>
-            <button style={secondaryBtn}>
+            <button
+              style={secondaryBtn}
+              onClick={() => plan.source_url && window.open(plan.source_url, "_blank", "noopener")}
+            >
               <ExternalLink size={16} />
               Más info
             </button>
@@ -1372,47 +1187,6 @@ function DetailSheet({
     </div>
   );
 }
-
-const editInput: CSSProperties = {
-  width: "100%",
-  padding: "10px 12px",
-  borderRadius: 11,
-  border: "1px solid var(--line)",
-  background: "var(--surface2)",
-  color: "var(--text)",
-  font: "600 14px/1 Figtree",
-  outline: "none",
-};
-const editCancelBtn: CSSProperties = {
-  flex: 1,
-  padding: 11,
-  borderRadius: 12,
-  border: "1px solid var(--line)",
-  background: "var(--surface)",
-  color: "var(--muted)",
-  font: "700 13px/1 Figtree",
-  cursor: "pointer",
-};
-const editSaveBtn: CSSProperties = {
-  flex: 1,
-  padding: 11,
-  borderRadius: 12,
-  border: "none",
-  background: "var(--text)",
-  color: "var(--bg)",
-  font: "700 13px/1 Figtree",
-  cursor: "pointer",
-};
-const smallChip: CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 5,
-  padding: "5px 9px",
-  borderRadius: 999,
-  background: "var(--chip)",
-  color: "var(--muted)",
-  font: "600 11.5px/1 Figtree",
-};
 
 function navBtn(active: boolean): CSSProperties {
   return {
