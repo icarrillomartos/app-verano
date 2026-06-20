@@ -131,6 +131,14 @@ export const Undo = (p: IconProps) => (
   </Svg>
 );
 
+// Icono de cambio de tema (círculo medio relleno = contraste claro/oscuro)
+export const ThemeToggle = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 3v18a9 9 0 0 0 0-18Z" fill="currentColor" stroke="none" />
+  </Svg>
+);
+
 export const LinkChain = (p: IconProps) => (
   <Svg {...p}>
     <path d="M9 15l6-6M11 6l1-1a3.5 3.5 0 0 1 5 5l-1 1M13 18l-1 1a3.5 3.5 0 0 1-5-5l1-1" />

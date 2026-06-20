@@ -115,4 +115,5 @@ button {
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
+  padding-top: env(safe-area-inset-top);
 }

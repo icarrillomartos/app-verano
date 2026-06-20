@@ -26,7 +26,7 @@ import {
   Chat,
   Home,
   Tray,
-  StatusIcons,
+  ThemeToggle,
 } from "@/components/icons";
 
 type Screen = "home" | "admin" | "onboarding";
@@ -206,26 +206,22 @@ export default function PlanApp() {
     font: "600 12px/1 Figtree",
   };
 
+  const iconBtn: CSSProperties = {
+    flex: "none",
+    width: 40,
+    height: 40,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 14,
+    border: "1px solid var(--line)",
+    background: "var(--surface)",
+    color: "var(--text)",
+    cursor: "pointer",
+  };
+
   return (
     <div className="app-shell">
-      {/* Status bar */}
-      <div
-        style={{
-          flex: "none",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          padding: "12px 24px 4px",
-          font: "700 14px/1 Figtree",
-          color: "var(--text)",
-        }}
-      >
-        <span onClick={toggleTheme} style={{ cursor: "pointer" }} title="Tocar para cambiar claro/oscuro">
-          9:41
-        </span>
-        <StatusIcons />
-      </div>
-
       {/* ============ HOME ============ */}
       {screen === "home" && (
         <>
@@ -248,24 +244,14 @@ export default function PlanApp() {
                 {members.length} personas · {plans.length} planes vivos
               </div>
             </div>
-            <button
-              onClick={() => setSortOpen((v) => !v)}
-              style={{
-                flex: "none",
-                width: 40,
-                height: 40,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                borderRadius: 14,
-                border: "1px solid var(--line)",
-                background: "var(--surface)",
-                color: "var(--text)",
-                cursor: "pointer",
-              }}
-            >
-              <Sliders size={19} />
-            </button>
+            <div style={{ flex: "none", display: "flex", alignItems: "center", gap: 8 }}>
+              <button onClick={toggleTheme} aria-label="Cambiar tema claro/oscuro" style={iconBtn}>
+                <ThemeToggle size={19} />
+              </button>
+              <button onClick={() => setSortOpen((v) => !v)} aria-label="Filtrar y ordenar" style={iconBtn}>
+                <Sliders size={19} />
+              </button>
+            </div>
 
             {sortOpen && (
               <div
@@ -614,6 +600,9 @@ export default function PlanApp() {
                 El agente aún no ha propuesto planes nuevos
               </div>
             </div>
+            <button onClick={toggleTheme} aria-label="Cambiar tema claro/oscuro" style={iconBtn}>
+              <ThemeToggle size={19} />
+            </button>
           </div>
           <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 36px 60px", textAlign: "center" }}>
             <div
