@@ -30,6 +30,7 @@ export type DBPlan = {
   is_flash: boolean;
   expires_at: string | null;
   status: string;
+  proposed_by?: string | null;
 };
 
 // Fondo placeholder a rayas por categoría (mientras no haya foto real).

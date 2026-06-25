@@ -1,15 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
 import { getMemberByAuthId } from "@/lib/auth";
 import type { Member } from "@/lib/data";
-import Login from "@/components/Login";
-import Register from "@/components/Register";
+import Auth from "@/components/Auth";
 import PlanApp from "@/components/PlanApp";
 
-type Phase = "loading" | "login" | "register" | "app";
+type Phase = "loading" | "auth" | "app";
 
 function Splash() {
   return (
@@ -20,12 +18,14 @@ function Splash() {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          font: "900 26px/1 Figtree",
+          font: "900 24px/1.1 Figtree",
           letterSpacing: "-0.02em",
           color: "var(--text)",
+          textAlign: "center",
+          padding: "0 30px",
         }}
       >
-        La cuadrilla
+        SOMos los que veranean
       </div>
     </div>
   );
@@ -33,41 +33,45 @@ function Splash() {
 
 export default function AppRoot() {
   const [phase, setPhase] = useState<Phase>("loading");
-  const [userId, setUserId] = useState<string | null>(null);
   const [member, setMember] = useState<Member | null>(null);
 
   useEffect(() => {
     if (!supabase) {
-      setPhase("login");
+      setPhase("auth");
       return;
     }
     let alive = true;
 
-    async function resolve(session: Session | null) {
-      if (!session?.user) {
-        if (!alive) return;
-        setUserId(null);
-        setMember(null);
-        setPhase("login");
+    supabase.auth.getSession().then(async ({ data }) => {
+      if (!alive) return;
+      const user = data.session?.user;
+      if (!user) {
+        setPhase("auth");
         return;
       }
-      setUserId(session.user.id);
       try {
-        const m = await getMemberByAuthId(session.user.id);
+        const m = await getMemberByAuthId(user.id);
         if (!alive) return;
         if (m) {
           setMember(m);
           setPhase("app");
         } else {
-          setPhase("register");
+          // sesión sin perfil: cerrar y volver al acceso
+          await supabase!.auth.signOut();
+          setPhase("auth");
         }
       } catch {
-        if (alive) setPhase("register");
+        if (alive) setPhase("auth");
       }
-    }
+    });
 
-    supabase.auth.getSession().then(({ data }) => resolve(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => resolve(session));
+    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
+      if (event === "SIGNED_OUT") {
+        setMember(null);
+        setPhase("auth");
+      }
+    });
+
     return () => {
       alive = false;
       sub.subscription.unsubscribe();
@@ -75,27 +79,16 @@ export default function AppRoot() {
   }, []);
 
   if (phase === "loading") return <Splash />;
-  if (phase === "login") return <Login />;
-  if (phase === "register" && userId)
+  if (phase === "auth")
     return (
-      <Register
-        userId={userId}
-        onDone={(m) => {
+      <Auth
+        onAuthed={(m) => {
           setMember(m);
           setPhase("app");
         }}
       />
     );
   if (phase === "app" && member)
-    return (
-      <PlanApp
-        currentMember={member}
-        onLogout={async () => {
-          await supabase?.auth.signOut();
-          setMember(null);
-          setPhase("login");
-        }}
-      />
-    );
+    return <PlanApp currentMember={member} onLogout={() => supabase?.auth.signOut()} />;
   return <Splash />;
 }

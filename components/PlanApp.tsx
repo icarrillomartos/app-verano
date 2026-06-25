@@ -9,7 +9,15 @@ import {
   photoLabelFor,
   expiresText,
 } from "@/lib/data";
-import { loadAppData, joinPlan, leavePlan } from "@/lib/queries";
+import {
+  loadAppData,
+  joinPlan,
+  leavePlan,
+  proposePlan,
+  approvePlan,
+  discardPlan,
+  type ProposalInput,
+} from "@/lib/queries";
 import {
   Sliders,
   Check,
@@ -27,6 +35,16 @@ import {
   Tray,
   ThemeToggle,
 } from "@/components/icons";
+
+const CATEGORIES = [
+  "Naturaleza",
+  "Aventura",
+  "Cultura",
+  "Ocio",
+  "Urbano",
+  "Viaje",
+  "Oportunidad",
+];
 
 type Screen = "home" | "admin" | "onboarding";
 type Sort = "date" | "price" | "mine";
@@ -59,21 +77,27 @@ export default function PlanApp({
   // --- Data state ---
   const [members, setMembers] = useState<Member[]>([]);
   const [plans, setPlans] = useState<DBPlan[]>([]);
+  const [pending, setPending] = useState<DBPlan[]>([]);
   const [attendance, setAttendance] = useState<Record<string, string[]>>({});
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [proposeOpen, setProposeOpen] = useState(false);
+
+  const refresh = useCallback(async () => {
+    const data = await loadAppData();
+    if (data) {
+      setMembers(data.members);
+      setPlans(data.plans);
+      setPending(data.pending);
+      setAttendance(data.attendance);
+    }
+  }, []);
 
   useEffect(() => {
     let alive = true;
     (async () => {
       try {
-        const data = await loadAppData();
-        if (!alive) return;
-        if (data) {
-          setMembers(data.members);
-          setPlans(data.plans);
-          setAttendance(data.attendance);
-        }
+        await refresh();
       } catch (e) {
         if (alive) setLoadError(e instanceof Error ? e.message : "Error cargando datos");
       } finally {
@@ -83,13 +107,7 @@ export default function PlanApp({
     return () => {
       alive = false;
     };
-  }, []);
-
-  // Apoyo de testing: ?screen=home|admin|onboarding
-  useEffect(() => {
-    const s = new URLSearchParams(window.location.search).get("screen");
-    if (s === "home" || s === "admin" || s === "onboarding") setScreen(s as Screen);
-  }, []);
+  }, [refresh]);
 
   // Tema (tocar la hora "9:41"); por defecto sigue al sistema
   useEffect(() => {
@@ -192,6 +210,11 @@ export default function PlanApp({
   const detailPlan = openId ? plans.find((p) => p.id === openId) ?? null : null;
   const attPlan = attendeesId ? plans.find((p) => p.id === attendeesId) ?? null : null;
   const showNav = screen === "home" || screen === "admin";
+  const isAdmin = !!currentMember.is_admin;
+  const pendingCount = pending.length;
+
+  const onApprove = (id: string) => approvePlan(id).then(refresh).catch(() => {});
+  const onDiscard = (id: string) => discardPlan(id).then(refresh).catch(() => {});
 
   const chip: CSSProperties = {
     display: "flex",
@@ -234,9 +257,9 @@ export default function PlanApp({
               zIndex: 5,
             }}
           >
-            <div>
-              <div style={{ font: "800 23px/1 Figtree", letterSpacing: "-0.02em", color: "var(--text)" }}>
-                La cuadrilla
+            <div style={{ paddingRight: 10, minWidth: 0 }}>
+              <div style={{ font: "800 20px/1.08 Figtree", letterSpacing: "-0.02em", color: "var(--text)", textWrap: "balance" }}>
+                SOMos los que veranean
               </div>
               <div style={{ marginTop: 5, font: "600 12.5px/1 Figtree", color: "var(--muted)" }}>
                 {members.length} personas · {plans.length} planes vivos
@@ -585,7 +608,7 @@ export default function PlanApp({
         </>
       )}
 
-      {/* ============ ADMIN (vacío en Fase 2) ============ */}
+      {/* ============ REVISAR (propuestas) ============ */}
       {screen === "admin" && (
         <>
           <div
@@ -599,40 +622,183 @@ export default function PlanApp({
           >
             <div style={{ paddingRight: 12 }}>
               <div style={{ font: "800 21px/1.15 Figtree", letterSpacing: "-0.01em", color: "var(--text)" }}>
-                Propuestas de esta semana
+                Revisar
               </div>
               <div style={{ marginTop: 5, font: "600 12px/1.3 Figtree", color: "var(--muted)" }}>
-                El agente aún no ha propuesto planes nuevos
+                {pendingCount === 0
+                  ? "Sin propuestas pendientes"
+                  : isAdmin
+                  ? `${pendingCount} ${pendingCount === 1 ? "propuesta" : "propuestas"} por aprobar`
+                  : `${pendingCount} en revisión`}
               </div>
             </div>
             <button onClick={toggleTheme} aria-label="Cambiar tema claro/oscuro" style={iconBtn}>
               <ThemeToggle size={19} />
             </button>
           </div>
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "0 36px 60px", textAlign: "center" }}>
-            <div
+
+          <div
+            className="scrolly"
+            style={{ flex: 1, overflowY: "auto", padding: "2px 16px 20px", display: "flex", flexDirection: "column", gap: 14 }}
+          >
+            <button
+              onClick={() => setProposeOpen(true)}
               style={{
-                width: 54,
-                height: 54,
-                borderRadius: 18,
-                border: "1px solid var(--line)",
-                background: "var(--surface)",
+                flex: "none",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                color: "var(--faint)",
-                marginBottom: 16,
+                gap: 8,
+                padding: "14px",
+                borderRadius: 16,
+                border: "none",
+                background: "var(--accent)",
+                color: "var(--accent-ink)",
+                font: "800 14.5px/1 Figtree",
+                cursor: "pointer",
               }}
             >
-              <Tray size={26} />
-            </div>
-            <div style={{ font: "800 16px/1.3 Figtree", color: "var(--text)", marginBottom: 7 }}>
-              Todo revisado
-            </div>
-            <div style={{ font: "500 13px/1.5 Figtree", color: "var(--muted)" }}>
-              Cuando el agente rastree Madrid y proponga planes nuevos, aparecerán aquí para que los apruebes.
-            </div>
+              <Plus size={18} sw={2.4} />
+              Proponer un plan
+            </button>
+
+            {pending.length === 0 && (
+              <div style={{ padding: "30px 20px", textAlign: "center", font: "500 13px/1.5 Figtree", color: "var(--muted)" }}>
+                Aquí aparecen los planes propuestos por el grupo a la espera de aprobación.
+                {isAdmin ? " Como admin, podrás aprobarlos o descartarlos." : " El admin los revisa antes de publicarlos."}
+              </div>
+            )}
+
+            {pending.map((p) => {
+              const free = p.price === 0;
+              const proposer = p.proposed_by ? byId[p.proposed_by]?.name : null;
+              return (
+                <div
+                  key={p.id}
+                  style={{ flex: "none", background: "var(--surface)", borderRadius: 22, overflow: "hidden", border: "1px solid var(--line)" }}
+                >
+                  <div style={{ position: "relative", width: "100%", height: 120, background: photoBgFor(p.category) }}>
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 11,
+                        left: 11,
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "5px 10px",
+                        borderRadius: 999,
+                        background: "rgba(20,14,10,0.5)",
+                        backdropFilter: "blur(6px)",
+                        WebkitBackdropFilter: "blur(6px)",
+                      }}
+                    >
+                      <span style={{ font: "700 10.5px/1 Figtree", color: "#fff", letterSpacing: "0.03em" }}>{p.category}</span>
+                    </div>
+                    <div
+                      style={{
+                        position: "absolute",
+                        top: 11,
+                        right: 11,
+                        padding: "5px 10px",
+                        borderRadius: 999,
+                        background: "var(--amber)",
+                        color: "var(--amber-ink)",
+                        font: "800 10.5px/1 Figtree",
+                      }}
+                    >
+                      Pendiente
+                    </div>
+                  </div>
+                  <div style={{ padding: "13px 15px 14px" }}>
+                    <div style={{ font: "700 16.5px/1.25 Figtree", color: "var(--text)", marginBottom: 10, textWrap: "pretty" }}>
+                      {p.title}
+                    </div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 11 }}>
+                      {p.date_text && (
+                        <div style={smallChip}>
+                          <Calendar size={12} />
+                          {p.date_text}
+                        </div>
+                      )}
+                      <div style={free ? { ...smallChip, background: "var(--pos-soft)", color: "var(--pos)" } : smallChip}>
+                        {free ? "Gratis" : `${p.price}€`}
+                      </div>
+                      {p.location && (
+                        <div style={smallChip}>
+                          <Pin size={12} />
+                          {p.location}
+                        </div>
+                      )}
+                    </div>
+                    {proposer && (
+                      <div style={{ font: "600 12px/1.3 Figtree", color: "var(--muted)", marginBottom: 12 }}>
+                        Propuesto por {proposer}
+                      </div>
+                    )}
+                    {isAdmin ? (
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <button
+                          onClick={() => onDiscard(p.id)}
+                          style={{
+                            flex: "none",
+                            width: 42,
+                            height: 42,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            borderRadius: 13,
+                            border: "1px solid var(--line)",
+                            background: "var(--surface)",
+                            color: "var(--muted)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <X size={17} />
+                        </button>
+                        <button
+                          onClick={() => onApprove(p.id)}
+                          style={{
+                            flex: 1,
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: 6,
+                            height: 42,
+                            borderRadius: 13,
+                            border: "none",
+                            background: "var(--accent)",
+                            color: "var(--accent-ink)",
+                            font: "800 13px/1 Figtree",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <Check size={15} sw={2.6} />
+                          Aprobar y publicar
+                        </button>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 6,
+                          padding: "8px 12px",
+                          borderRadius: 999,
+                          background: "var(--amber-soft)",
+                          color: "var(--amber-ink2)",
+                          font: "700 12px/1 Figtree",
+                        }}
+                      >
+                        <Clock size={13} />
+                        En revisión
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
+
           <div
             style={{
               flex: "none",
@@ -646,6 +812,7 @@ export default function PlanApp({
           >
             <span style={{ font: "600 12.5px/1.3 Figtree", color: "var(--muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               Conectado como <b style={{ color: "var(--text)" }}>{currentMember.name}</b>
+              {isAdmin ? " · admin" : ""}
             </span>
             <button
               onClick={onLogout}
@@ -713,7 +880,7 @@ export default function PlanApp({
             ))}
           </div>
           <div style={{ font: "900 32px/1 Figtree", letterSpacing: "-0.02em", color: "var(--text)" }}>
-            La cuadrilla
+            SOMos los que veranean
           </div>
           <div style={{ marginTop: 9, font: "600 14px/1 Figtree", color: "var(--muted)" }}>
             {members.length || 12} personas · Madrid
@@ -791,9 +958,28 @@ export default function PlanApp({
             <Home size={22} />
             <span style={{ font: "700 10.5px/1 Figtree" }}>Planes</span>
           </button>
-          <button onClick={() => goScreen("admin")} style={navBtn(screen === "admin")}>
+          <button onClick={() => goScreen("admin")} style={{ ...navBtn(screen === "admin"), position: "relative" }}>
             <Tray size={22} />
             <span style={{ font: "700 10.5px/1 Figtree" }}>Revisar</span>
+            {pendingCount > 0 && (
+              <span
+                style={{
+                  position: "absolute",
+                  top: 3,
+                  right: "calc(50% - 22px)",
+                  minWidth: 17,
+                  height: 17,
+                  padding: "0 4px",
+                  borderRadius: 999,
+                  background: "var(--accent)",
+                  color: "var(--accent-ink)",
+                  font: "800 10px/17px Figtree",
+                  textAlign: "center",
+                }}
+              >
+                {pendingCount}
+              </span>
+            )}
           </button>
         </div>
       )}
@@ -929,6 +1115,47 @@ export default function PlanApp({
             </div>
           </div>
         </div>
+      )}
+
+      {/* ============ BOTÓN FLOTANTE: PROPONER (en Home) ============ */}
+      {screen === "home" && !loading && (
+        <button
+          onClick={() => setProposeOpen(true)}
+          aria-label="Proponer un plan"
+          style={{
+            position: "absolute",
+            right: 18,
+            bottom: "calc(76px + env(safe-area-inset-bottom))",
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            padding: "13px 18px 13px 15px",
+            borderRadius: 999,
+            border: "none",
+            background: "var(--accent)",
+            color: "var(--accent-ink)",
+            font: "800 14px/1 Figtree",
+            boxShadow: "0 8px 24px rgba(20,14,10,0.28)",
+            cursor: "pointer",
+            zIndex: 20,
+          }}
+        >
+          <Plus size={18} sw={2.6} />
+          Proponer
+        </button>
+      )}
+
+      {/* ============ HOJA: PROPONER UN PLAN ============ */}
+      {proposeOpen && (
+        <ProposeSheet
+          memberId={meId}
+          onClose={() => setProposeOpen(false)}
+          onDone={async () => {
+            await refresh();
+            setProposeOpen(false);
+            setScreen("admin");
+          }}
+        />
       )}
     </div>
   );
@@ -1239,4 +1466,231 @@ function navBtn(active: boolean): CSSProperties {
     cursor: "pointer",
     color: active ? "var(--accent)" : "var(--faint)",
   };
+}
+
+const smallChip: CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 5,
+  padding: "5px 9px",
+  borderRadius: 999,
+  background: "var(--chip)",
+  color: "var(--muted)",
+  font: "600 11.5px/1 Figtree",
+};
+
+const formInput: CSSProperties = {
+  width: "100%",
+  padding: "12px 14px",
+  borderRadius: 13,
+  border: "1px solid var(--line)",
+  background: "var(--surface2)",
+  color: "var(--text)",
+  font: "600 14px/1.3 Figtree",
+  outline: "none",
+};
+
+const formLabel: CSSProperties = {
+  font: "700 11px/1 Figtree",
+  color: "var(--muted)",
+  textTransform: "uppercase",
+  letterSpacing: "0.05em",
+  marginBottom: 7,
+  display: "block",
+};
+
+function ProposeSheet({
+  memberId,
+  onClose,
+  onDone,
+}: {
+  memberId: string;
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("Ocio");
+  const [dateText, setDateText] = useState("");
+  const [price, setPrice] = useState("");
+  const [location, setLocation] = useState("");
+  const [description, setDescription] = useState("");
+  const [sourceUrl, setSourceUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit() {
+    if (!title.trim()) return setError("Ponle un título al plan.");
+    setLoading(true);
+    setError(null);
+    try {
+      await proposePlan(memberId, {
+        title,
+        category,
+        date_text: dateText,
+        price: parseInt(price || "0", 10) || 0,
+        location,
+        description,
+        source_url: sourceUrl,
+      });
+      onDone();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "No se pudo enviar la propuesta");
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "absolute",
+        inset: 0,
+        zIndex: 60,
+        background: "var(--scrim)",
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "flex-end",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: "var(--surface)",
+          borderRadius: "28px 28px 0 0",
+          maxHeight: "94%",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        <div
+          style={{
+            flex: "none",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "18px 20px 12px",
+          }}
+        >
+          <div>
+            <div style={{ font: "800 18px/1 Figtree", color: "var(--text)" }}>Proponer un plan</div>
+            <div style={{ marginTop: 5, font: "600 12px/1.3 Figtree", color: "var(--muted)" }}>
+              Se envía a revisión antes de publicarse
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: "50%",
+              border: "none",
+              background: "var(--chip)",
+              color: "var(--text)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+            }}
+          >
+            <X size={17} />
+          </button>
+        </div>
+
+        <div
+          className="scrolly"
+          style={{ flex: 1, overflowY: "auto", padding: "4px 20px 8px", display: "flex", flexDirection: "column", gap: 16 }}
+        >
+          <div>
+            <label style={formLabel}>Título</label>
+            <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Ej. Cena en la terraza de Iker" style={formInput} />
+          </div>
+
+          <div>
+            <label style={formLabel}>Categoría</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {CATEGORIES.map((c) => {
+                const active = c === category;
+                return (
+                  <button
+                    key={c}
+                    onClick={() => setCategory(c)}
+                    style={{
+                      padding: "8px 12px",
+                      borderRadius: 999,
+                      border: active ? "1px solid var(--accent)" : "1px solid var(--line)",
+                      background: active ? "var(--accent-soft)" : "var(--surface)",
+                      color: active ? "var(--accent)" : "var(--muted)",
+                      font: "700 12.5px/1 Figtree",
+                      cursor: "pointer",
+                    }}
+                  >
+                    {c}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <label style={formLabel}>Cuándo</label>
+              <input value={dateText} onChange={(e) => setDateText(e.target.value)} placeholder="Sáb 12 jul" style={formInput} />
+            </div>
+            <div style={{ width: 110 }}>
+              <label style={formLabel}>Precio €</label>
+              <input value={price} onChange={(e) => setPrice(e.target.value)} inputMode="numeric" placeholder="0" style={formInput} />
+            </div>
+          </div>
+
+          <div>
+            <label style={formLabel}>Ubicación</label>
+            <input value={location} onChange={(e) => setLocation(e.target.value)} placeholder="Ej. La Latina" style={formInput} />
+          </div>
+
+          <div>
+            <label style={formLabel}>Descripción</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="¿En qué consiste el plan?"
+              rows={3}
+              style={{ ...formInput, resize: "none", lineHeight: 1.4 }}
+            />
+          </div>
+
+          <div>
+            <label style={formLabel}>Enlace (opcional)</label>
+            <input value={sourceUrl} onChange={(e) => setSourceUrl(e.target.value)} inputMode="url" placeholder="https://…" style={formInput} />
+          </div>
+
+          {error && <div style={{ font: "600 12.5px/1.4 Figtree", color: "var(--accent)" }}>{error}</div>}
+        </div>
+
+        <div style={{ flex: "none", padding: "12px 20px calc(15px + env(safe-area-inset-bottom))", borderTop: "1px solid var(--line)" }}>
+          <button
+            onClick={submit}
+            disabled={loading}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 8,
+              padding: 16,
+              borderRadius: 16,
+              border: "none",
+              background: "var(--accent)",
+              color: "var(--accent-ink)",
+              font: "800 16px/1 Figtree",
+              cursor: "pointer",
+              opacity: loading ? 0.6 : 1,
+            }}
+          >
+            {loading ? "Enviando…" : "Enviar a revisión"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }

@@ -10,16 +10,11 @@ const anon =
 
 export const isSupabaseConfigured = Boolean(url && anon);
 
+// Auth por email + contraseña (sin emails): la sesión se establece dentro de la
+// app, así que funciona en la PWA instalada y no depende de límites de email.
 export const supabase = isSupabaseConfigured
   ? createClient(url, anon, {
-      auth: {
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-        // Flujo implícito: el enlace mágico trae el token en la URL y funciona
-        // aunque el email se abra en otro navegador/app (clave en móvil).
-        flowType: "implicit",
-      },
+      auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false },
     })
   : null;
 

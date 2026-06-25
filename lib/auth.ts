@@ -26,25 +26,10 @@ function initialsOf(name: string): string {
   return (a + b).toUpperCase();
 }
 
-export async function createMember(opts: {
-  userId: string;
-  name: string;
-  file: File;
-}): Promise<Member> {
+// Registro: solo nombre. El avatar es un círculo de color con las iniciales.
+export async function createMember(opts: { userId: string; name: string }): Promise<Member> {
   if (!supabase) throw new Error("Sin conexión con la base de datos");
-  const { userId, name, file } = opts;
-
-  // Sube la foto de cara a Storage (bucket avatars)
-  const rawExt = (file.name.split(".").pop() || "jpg").toLowerCase();
-  const ext = /^(png|jpe?g|webp)$/.test(rawExt) ? rawExt : "jpg";
-  const path = `${userId}.${ext}`;
-  const up = await supabase.storage
-    .from("avatars")
-    .upload(path, file, { upsert: true, contentType: file.type || "image/jpeg" });
-  if (up.error) throw up.error;
-  const photo_url =
-    supabase.storage.from("avatars").getPublicUrl(path).data.publicUrl +
-    "?v=" + path.length; // cache-bust estable por path
+  const { userId, name } = opts;
 
   // El primer registrado de verdad es el admin
   const { count } = await supabase
@@ -61,7 +46,6 @@ export async function createMember(opts: {
       name,
       initials: initialsOf(name),
       color,
-      photo_url,
       auth_id: userId,
       is_admin: realCount === 0,
     })
