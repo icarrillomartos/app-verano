@@ -1,13 +1,18 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import SWRegister from "@/components/SWRegister";
 
 export const metadata: Metadata = {
-  title: "La cuadrilla",
-  description: "El tablón de planes de la cuadrilla — todo se entiende de un vistazo.",
+  applicationName: "SOMos los que veranean",
+  title: "SOMos los que veranean",
+  description: "El tablón de planes de verano de la cuadrilla.",
   appleWebApp: {
     capable: true,
     statusBarStyle: "default",
-    title: "La cuadrilla",
+    title: "SOMos",
+  },
+  other: {
+    "mobile-web-app-capable": "yes",
   },
 };
 
@@ -38,7 +43,10 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body>{children}</body>
+      <body>
+        <SWRegister />
+        {children}
+      </body>
     </html>
   );
 }
