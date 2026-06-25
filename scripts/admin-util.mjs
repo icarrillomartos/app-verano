@@ -18,7 +18,62 @@ if (!sr) {
 }
 const admin = createClient(URL, sr.api_key, { auth: { persistSession: false } });
 
-if (action === "wipe-users") {
+if (action === "create-admin") {
+  const GROUP_ID = "00000000-0000-0000-0000-0000000000aa";
+  const email = process.env.ADMIN_EMAIL || "icarrillomartos@gmail.com";
+  const password = process.env.ADMIN_PW;
+  if (!password) {
+    console.error("Falta ADMIN_PW (la contraseña del admin)");
+    process.exit(1);
+  }
+  // Crea (o recupera) el usuario auth confirmado
+  let userId;
+  const created = await admin.auth.admin.createUser({ email, password, email_confirm: true });
+  if (created.error) {
+    const { data } = await admin.auth.admin.listUsers();
+    userId = (data?.users || []).find((u) => u.email === email)?.id;
+    console.log("usuario ya existía:", userId);
+  } else {
+    userId = created.data.user.id;
+    console.log("usuario creado:", userId);
+  }
+  if (!userId) {
+    console.error("no se pudo obtener userId");
+    process.exit(1);
+  }
+  // Miembro admin (upsert por auth_id)
+  const { data: existing } = await admin.from("members").select("id").eq("auth_id", userId).maybeSingle();
+  if (existing) {
+    await admin.from("members").update({ is_admin: true, name: "Iván" }).eq("id", existing.id);
+    console.log("miembro admin actualizado");
+  } else {
+    const { error } = await admin.from("members").insert({
+      group_id: GROUP_ID,
+      name: "Iván",
+      initials: "IV",
+      color: "#E0455E",
+      auth_id: userId,
+      is_admin: true,
+    });
+    if (error) {
+      console.error("error insertando miembro:", error.message);
+      process.exit(1);
+    }
+    console.log("miembro admin creado");
+  }
+} else if (action === "del-nonadmin") {
+  // Borra usuarios auth que NO sean el admin fijo
+  const keep = "icarrillomartos@gmail.com";
+  const { data } = await admin.auth.admin.listUsers();
+  let n = 0;
+  for (const u of data?.users || []) {
+    if ((u.email || "") !== keep) {
+      await admin.auth.admin.deleteUser(u.id);
+      n++;
+    }
+  }
+  console.log("usuarios no-admin borrados:", n);
+} else if (action === "wipe-users") {
   const { data } = await admin.auth.admin.listUsers();
   let n = 0;
   for (const u of data?.users || []) {

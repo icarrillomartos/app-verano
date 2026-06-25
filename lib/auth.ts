@@ -47,7 +47,7 @@ export async function createMember(opts: { userId: string; name: string }): Prom
       initials: initialsOf(name),
       color,
       auth_id: userId,
-      is_admin: realCount === 0,
+      is_admin: false, // el admin es un usuario fijo; el resto, usuarios normales
     })
     .select(MEMBER_COLS)
     .single();
