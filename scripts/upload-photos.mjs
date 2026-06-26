@@ -5,7 +5,7 @@ import fs from "node:fs";
 const REF = "ekrigvydtruusckoqtrf";
 const KEY = "sb_publishable_6Hsumbsje-FETy-XbuVlUQ_4IqNUHv1";
 const BUCKET = "plan-photos";
-const UA = "LaCuadrillaApp/1.0 (icarrillomartos@gmail.com)";
+const UA = "LaCuadrillaApp/1.0 (admin@example.com)";
 
 const arr = JSON.parse(fs.readFileSync("data/fotos.json", "utf8"));
 

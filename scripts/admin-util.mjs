@@ -20,7 +20,7 @@ const admin = createClient(URL, sr.api_key, { auth: { persistSession: false } })
 
 if (action === "create-admin") {
   const GROUP_ID = "00000000-0000-0000-0000-0000000000aa";
-  const email = process.env.ADMIN_EMAIL || "icarrillomartos@gmail.com";
+  const email = process.env.ADMIN_EMAIL || "admin@example.com";
   const password = process.env.ADMIN_PW;
   if (!password) {
     console.error("Falta ADMIN_PW (la contraseña del admin)");
@@ -63,7 +63,7 @@ if (action === "create-admin") {
   }
 } else if (action === "del-nonadmin") {
   // Borra usuarios auth que NO sean el admin fijo
-  const keep = "icarrillomartos@gmail.com";
+  const keep = "admin@example.com";
   const { data } = await admin.auth.admin.listUsers();
   let n = 0;
   for (const u of data?.users || []) {

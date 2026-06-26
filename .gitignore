@@ -29,3 +29,6 @@ next-env.d.ts
 
 # vercel
 .vercel
+
+# Claude Code (config local, no publicar)
+.claude/

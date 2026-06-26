@@ -29,7 +29,7 @@ const PLANS = [
 
 const headers = {
   "User-Agent":
-    "LaCuadrillaApp/1.0 (https://app-verano.vercel.app; icarrillomartos@gmail.com)",
+    "LaCuadrillaApp/1.0 (https://app-verano.vercel.app; admin@example.com)",
 };
 
 async function findImage(q) {
