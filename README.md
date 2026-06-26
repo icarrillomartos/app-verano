@@ -4,7 +4,7 @@ Una **PWA** (web instalable como app) para que una cuadrilla de amigos organice 
 **planes de verano** sin perderse en el chat: un tablón de planes con foto donde te
 **apuntas de un toque**, propones planes nuevos y un admin los revisa.
 
-🔗 **Demo en vivo:** https://app-verano.vercel.app
+🔗 **Demo en vivo:** https://app-verano.vercel.app (please, no te registres que es mi propia app con mis amigos jeje)
 
 > Hecho con Next.js + Supabase + Vercel. **100% gratis de mantener** (sin envío de emails, sin servicios de pago).
 
